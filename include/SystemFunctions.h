@@ -1,0 +1,12 @@
+#ifndef ROCKET_AVIONICS_TEMPLATE_SYSTEMFUNCTIONS_H
+#define ROCKET_AVIONICS_TEMPLATE_SYSTEMFUNCTIONS_H
+
+#include <Arduino.h>
+
+void ReadIMU();
+
+void ReadAltimeter();
+
+void ReadGNSS();
+
+#endif  //ROCKET_AVIONICS_TEMPLATE_SYSTEMFUNCTIONS_H
