@@ -13,6 +13,7 @@
 #include "UserConfig.h"   // User's Custom Configurations
 #include "UserPins.h"     // User's Pins Mapping
 #include "UserSensors.h"  // User's Hardware Implementations
+#include "UserFSM.h"      // User's FSM States
 /* END INCLUDE USER'S IMPLEMENTATIONS */
 
 /* BEGIN INCLUDE MAIN */
@@ -41,6 +42,12 @@ struct SensorsHealth {
   SensorStatus gnss[RA_NUM_GNSS]{};
 } sensors_health;
 /* END SENSOR STATUSES */
+
+/* BEGIN PERSISTENT STATE */
+// todo: EEPROM for persistent state
+UserFSM fsm;
+double  acc;
+/* END PERSISTENT STATE */
 
 /* BEGIN DATA MEMORY */
 struct DataMemory {
@@ -73,14 +80,8 @@ void UserSetupSPI() {
 /* END USER SETUP */
 
 /* BEGIN USER THREADS */
-void blink(void *) {
-  hal::rtos::interval_loop(500ul, []() -> void {
-    digitalToggle(USER_GPIO_LED);
-  });
-}
-
-void read_acc(void *) {
-  hal::rtos::interval_loop(25ul, [&]() -> void {
+void CB_ReadIMU(void *) {
+  hal::rtos::interval_loop(RA_INTERVAL_IMU_READING, [&]() -> void {
     mtx_spi.exec([&]() -> void {
       ReadIMU();
     });
@@ -88,36 +89,31 @@ void read_acc(void *) {
     const double &ax = data.imu[0].acc_x;
     const double &ay = data.imu[0].acc_y;
     const double &az = data.imu[0].acc_z;
-    const double  a  = std::sqrt(std::abs(ax * ax) + std::abs(ay * ay) + std::abs(az + az));
 
-    mtx_cdc.exec([&]() -> void {
-      Serial.printf("%f\n", a);
+    // Total acceleration
+    acc = std::sqrt(std::abs(ax * ax) + std::abs(ay * ay) + std::abs(az + az));
+  });
+}
+
+void CB_ReadAltimeter(void *) {
+  hal::rtos::interval_loop(RA_INTERVAL_ALTIMETER_READING, [&]() -> void {
+    mtx_spi.exec([&]() -> void {
+      ReadAltimeter();
     });
   });
 }
 
-void read_bmp(void *) {
-  hal::rtos::interval_loop(100ul, [&]() -> void {
-    mtx_spi.exec([&]() -> void {
-      ReadAltimeter();
-    });
-
-    mtx_cdc.exec([&]() -> void {
-      Serial.print("Pressure (hPa): ");
-      Serial.print(data.altimeter[0].pressure_hpa);
-      Serial.print("\t\t");
-      Serial.print("Altitude (m): ");
-      Serial.println(data.altimeter[0].altitude_m);
-    });
+void CB_EvalFSM(void *) {
+  hal::rtos::interval_loop(RA_INTERVAL_FSM_EVAL, [&]() -> void {
+    EvalFSM();
   });
 }
 
 /* END USER THREADS */
 
 void UserThreads() {
-  hal::rtos::scheduler.create(blink, {.stack_size = 128, .priority = osPriorityLow});
-  hal::rtos::scheduler.create(read_acc, {.stack_size = 2048, .priority = osPriorityRealtime});
-  // hal::rtos::scheduler.create(read_bmp, {.stack_size = 2048, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_ReadIMU, {.stack_size = 2048, .priority = osPriorityRealtime});
+  hal::rtos::scheduler.create(CB_ReadAltimeter, {.stack_size = 2048, .priority = osPriorityHigh});
 }
 
 void setup() {
@@ -169,6 +165,74 @@ void setup() {
   UserThreads();
   hal::rtos::scheduler.start();
   /* END SYSTEM/KERNEL SETUP */
+}
+
+void EvalFSM() {
+  static bool                          state_succeeded = false;
+  static uint32_t                      state_millis    = 0;
+  static xcore::sampler_t<128, double> sampler;
+
+  switch (fsm.state()) {
+    case UserState::STARTUP: {
+      // <--- Next: always transfer --->
+      fsm.transfer(UserState::IDLE_SAFE);
+      break;
+    }
+
+    case UserState::IDLE_SAFE: {
+      // <--- Next: always transfer (should wait for uplink) --->
+      fsm.transfer(UserState::ARMED);
+      break;
+    }
+
+    case UserState::ARMED: {
+      // <--- Next: always transfer (should wait for uplink) --->
+      fsm.transfer(UserState::PAD_PREOP);
+      break;
+    }
+
+    case UserState::PAD_PREOP: {
+      // !!!! Next: DETECT launch !!!!
+      if (fsm.is_transferred()) {  // Run once
+        sampler.set_capacity(1, /*recount*/ false);
+        sampler.set_threshold(1, /*recount*/ false);
+        sampler.reset();
+      }
+      break;
+    }
+
+    case UserState::POWERED: {
+      break;
+    }
+
+    case UserState::COASTING: {
+      break;
+    }
+
+    case UserState::DROGUE_DEPLOY: {
+      break;
+    }
+
+    case UserState::DROGUE_DESCEND: {
+      break;
+    }
+
+    case UserState::MAIN_DEPLOY: {
+      break;
+    }
+
+    case UserState::MAIN_DESCEND: {
+      break;
+    }
+
+    case UserState::LANDED: {
+      break;
+    }
+
+    case UserState::RECOVERED_SAFE: {
+      break;
+    }
+  }
 }
 
 void ReadIMU() {
