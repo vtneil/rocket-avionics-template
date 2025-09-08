@@ -5,6 +5,8 @@
 
 extern void UserSetupGPIO();
 
+extern void UserSetupActuator();
+
 extern void UserSetupCDC();
 
 extern void UserSetupUSART();

@@ -20,7 +20,7 @@ public:
     acc.begin();
     acc.setOperatingMode(FULL_BANDWIDTH);
     acc.setOdr(ODR_6400Hz);
-    acc.setBandwidth(BW_1600Hz);
+    acc.setBandwidth(BW_3200Hz);
     acc.setFilterSettling(FSP_16ms);
     acc.disableLowPassFilter(true);
     acc.disableHighPassFilter(true);
@@ -30,7 +30,6 @@ public:
   bool read() override {
     acc.readAcceleration(axf, ayf, azf);
     ax = axf, ay = ayf, az = azf;
-    ax *= 9.81, ay *= 9.81, az *= 9.81;
     return true;
   }
 

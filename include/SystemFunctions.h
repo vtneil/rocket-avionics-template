@@ -9,4 +9,6 @@ void ReadAltimeter();
 
 void ReadGNSS();
 
+void ActivateDeployment(size_t index);
+
 #endif  //ROCKET_AVIONICS_TEMPLATE_SYSTEMFUNCTIONS_H

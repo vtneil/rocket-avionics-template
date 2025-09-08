@@ -72,7 +72,7 @@ public:
    *
    * @return
    */
-  bool is_transferred() {
+  bool on_enter() {
     if (state_ == prev_state_)
       return false;
 

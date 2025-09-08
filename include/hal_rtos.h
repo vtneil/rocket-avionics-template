@@ -165,6 +165,20 @@ namespace hal::rtos {
      * maintaining a consistent periodic rate.
      *
      */
+    template<typename Func>
+    void operator()(Func &&func) const {
+      const uint32_t tick = osKernelGetTickCount();
+      func();
+      osDelayUntil(tick + freq);
+    }
+
+    template<typename Func>
+    void operator()(Func &&func, void *arg) const {
+      const uint32_t tick = osKernelGetTickCount();
+      func(arg);
+      osDelayUntil(tick + freq);
+    }
+
     void operator()() const {
       const uint32_t tick = osKernelGetTickCount();
       osDelayUntil(tick + freq);
@@ -336,8 +350,7 @@ namespace hal::rtos {
   [[noreturn]] void interval_loop(const TickType_t interval_ms, Func &&func) {
     const interval_delay delay_until(interval_ms);
     for (;;) {
-      delay_until();
-      func();
+      delay_until(func);
     }
   }
 
@@ -352,8 +365,7 @@ namespace hal::rtos {
   [[noreturn]] void interval_loop(const TickType_t interval_ms, Func &&func, void *arg) {
     const interval_delay delay_until(interval_ms);
     for (;;) {
-      delay_until();
-      func(arg);
+      delay_until(func, arg);
     }
   }
 
@@ -362,16 +374,15 @@ namespace hal::rtos {
    * The loop will repeatedly call the provided function with the specified delay interval.
    *
    * @param interval_ms The interval in milliseconds between consecutive executions of the function.
-   * @param rng_func Next interval function
+   * @param next_interval_func Next interval function
    * @param func The callable object (e.g., lambda, function, functor) to be executed periodically.
    */
   template<typename Func, typename RngFunc>
-  [[noreturn]] void interval_loop(const TickType_t interval_ms, RngFunc &&rng_func, Func &&func) {
+  [[noreturn]] void interval_loop(const TickType_t interval_ms, RngFunc &&next_interval_func, Func &&func) {
     interval_delay delay_until(interval_ms);
     for (;;) {
-      delay_until();
-      func();
-      delay_until.set_interval(rng_func());
+      delay_until(func);
+      delay_until.set_interval(next_interval_func());
     }
   }
 
@@ -379,17 +390,16 @@ namespace hal::rtos {
    * Infinite loop that repeatedly executes a given function at specified intervals.
    *
    * @param interval_ms The interval duration in milliseconds.
-   * @param rng_func Next interval function
+   * @param next_interval_func Next interval function
    * @param func The function to be invoked during each iteration of the loop.
    * @param arg A pointer to the argument passed to the function.
    */
   template<typename Func, typename RngFunc>
-  [[noreturn]] void interval_loop(const TickType_t interval_ms, RngFunc &&rng_func, Func &&func, void *arg) {
+  [[noreturn]] void interval_loop(const TickType_t interval_ms, RngFunc &&next_interval_func, Func &&func, void *arg) {
     interval_delay delay_until(interval_ms);
     for (;;) {
-      delay_until();
-      func(arg);
-      delay_until.set_interval(rng_func());
+      delay_until(func, arg);
+      delay_until.set_interval(next_interval_func());
     }
   }
 

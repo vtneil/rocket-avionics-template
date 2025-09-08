@@ -2,11 +2,15 @@
 #include <Arduino.h>          // Arduino Framework
 #include <LibAvionics.h>      // Base Avionics Library and Utilities
 #include "SystemFunctions.h"  // Function Declarations
+#include "custom_kalman.h"    // Kalman Quick Table
 
 #if __has_include("STM32FreeRTOS.h")
 #  define USE_FREERTOS 1
 #  include "hal_rtos.h"
 #endif
+
+#include <STM32SD.h>
+#include <Servo.h>
 /* END INCLUDE SYSTEM LIBRARIES */
 
 /* BEGIN INCLUDE USER'S IMPLEMENTATIONS */
@@ -57,14 +61,58 @@ struct DataMemory {
 } data;
 /* END DATA MEMORY */
 
+/* BEGIN FILTERS */
+FilterT filter_alt;
+/* END FILTERS */
+
+/* BEGIN ACTUATORS */
+Servo servo_a;
+Servo servo_b;
+/* END ACTUATORS */
+
 /* BEGIN USER PRIVATE VARIABLES */
 hal::rtos::mutex_t mtx_spi;
 hal::rtos::mutex_t mtx_cdc;
 /* END USER PRIVATE VARIABLES */
 
+/* BEGIN USER PRIVATE FUNCTIONS */
+uint32_t LoggerInterval() {
+  switch (fsm.state()) {
+    case UserState::STARTUP:
+      break;
+    case UserState::IDLE_SAFE:
+      break;
+    case UserState::ARMED:
+      break;
+    case UserState::PAD_PREOP:
+      break;
+    case UserState::POWERED:
+      break;
+    case UserState::COASTING:
+      break;
+    case UserState::DROGUE_DEPLOY:
+      break;
+    case UserState::DROGUE_DESCEND:
+      break;
+    case UserState::MAIN_DEPLOY:
+      break;
+    case UserState::MAIN_DESCEND:
+      break;
+    case UserState::LANDED:
+      break;
+    case UserState::RECOVERED_SAFE:
+      break;
+  }
+}
+/* END USER PRIVATE FUNCTIONS */
+
 /* BEGIN USER SETUP */
 void UserSetupGPIO() {
   pinMode(USER_GPIO_LED, OUTPUT);
+}
+
+void UserSetupActuator() {
+  servo_a.attach(USER_GPIO_SERVO_A, RA_SERVO_MIN, RA_SERVO_MAX, RA_SERVO_MAX);
 }
 
 void UserSetupCDC() {
@@ -100,6 +148,7 @@ void CB_ReadAltimeter(void *) {
     mtx_spi.exec([&]() -> void {
       ReadAltimeter();
     });
+    filter_alt.kf.predict().update(data.altimeter[0].altitude_m);
   });
 }
 
@@ -109,10 +158,16 @@ void CB_EvalFSM(void *) {
   });
 }
 
+void CB_Logger(void *) {
+  hal::rtos::interval_loop(LoggerInterval(), LoggerInterval, [&]() -> void {
+  });
+}
+
 /* END USER THREADS */
 
 void UserThreads() {
-  hal::rtos::scheduler.create(CB_ReadIMU, {.stack_size = 2048, .priority = osPriorityRealtime});
+  hal::rtos::scheduler.create(CB_EvalFSM, {.stack_size = 2048, .priority = osPriorityRealtime});
+  hal::rtos::scheduler.create(CB_ReadIMU, {.stack_size = 2048, .priority = osPriorityHigh});
   hal::rtos::scheduler.create(CB_ReadAltimeter, {.stack_size = 2048, .priority = osPriorityHigh});
 }
 
@@ -126,6 +181,7 @@ void setup() {
   /* END GPIO AND INTERFACES SETUP */
 
   /* BEGIN STORAGES SETUP */
+  // todo: SD CARD
   /* END STORAGES SETUP */
 
   /* BEGIN SENSORS SETUP */
@@ -168,9 +224,10 @@ void setup() {
 }
 
 void EvalFSM() {
-  static bool                          state_succeeded = false;
-  static uint32_t                      state_millis    = 0;
-  static xcore::sampler_t<128, double> sampler;
+  static bool                          state_succeeded      = false;
+  static uint32_t                      state_millis_start   = 0;
+  static uint32_t                      state_millis_elapsed = 0;
+  static xcore::sampler_t<512, double> sampler;
 
   switch (fsm.state()) {
     case UserState::STARTUP: {
@@ -193,35 +250,106 @@ void EvalFSM() {
 
     case UserState::PAD_PREOP: {
       // !!!! Next: DETECT launch !!!!
-      if (fsm.is_transferred()) {  // Run once
-        sampler.set_capacity(1, /*recount*/ false);
-        sampler.set_threshold(1, /*recount*/ false);
+      if (fsm.on_enter()) {  // Run once
         sampler.reset();
+        sampler.set_capacity(RA_LAUNCH_SAMPLES, /*recount*/ false);
+        sampler.set_threshold(RA_LAUNCH_ACC, /*recount*/ false);
       }
+
+      sampler.add_sample(acc);
+
+      if (sampler.is_sampled() &&
+          sampler.over_by_under<double>() > RA_TRUE_TO_FALSE_RATIO)
+        fsm.transfer(UserState::POWERED);
       break;
     }
 
     case UserState::POWERED: {
+      // !!!! Next: DETECT motor burnout !!!!
+      if (fsm.on_enter()) {  // Run once
+        sampler.reset();
+        sampler.set_capacity(RA_BURNOUT_SAMPLES, /*recount*/ false);
+        sampler.set_threshold(RA_BURNOUT_ACC, /*recount*/ false);
+        state_millis_start = millis();
+      }
+
+      sampler.add_sample(acc);
+      state_millis_elapsed = millis() - state_millis_start;
+
+      if (state_millis_elapsed >= RA_TIME_TO_BURNOUT_MAX ||
+          (state_millis_elapsed >= RA_TIME_TO_BURNOUT_MIN &&
+           sampler.is_sampled() &&
+           sampler.under_by_over<double>() > RA_TRUE_TO_FALSE_RATIO))
+        fsm.transfer(UserState::COASTING);
       break;
     }
 
     case UserState::COASTING: {
+      // !!!! Next: DETECT apogee !!!!
+      if (fsm.on_enter()) {  // Run once
+        sampler.reset();
+        sampler.set_capacity(RA_APOGEE_SAMPLES, /*recount*/ false);
+        sampler.set_threshold(RA_APOGEE_VEL, /*recount*/ false);
+        state_millis_start = millis();
+      }
+
+      const double vel = filter_alt.kf.state_vector()[1];
+      sampler.add_sample(vel);
+      state_millis_elapsed = millis() - state_millis_start;
+
+      if (state_millis_elapsed >= RA_TIME_TO_APOGEE_MAX ||
+          (state_millis_elapsed >= RA_TIME_TO_APOGEE_MIN &&
+           sampler.is_sampled() &&
+           sampler.under_by_over<double>() > RA_TRUE_TO_FALSE_RATIO))
+        fsm.transfer(UserState::DROGUE_DEPLOY);
       break;
     }
 
     case UserState::DROGUE_DEPLOY: {
+      // <--- Next: activate pyro/servo and always transfer --->
+      ActivateDeployment(/*index*/ 0);
+      fsm.transfer(UserState::DROGUE_DESCEND);
       break;
     }
 
     case UserState::DROGUE_DESCEND: {
+      // !!!! Next: DETECT main deployment altitude !!!!
+      if (fsm.on_enter()) {  // Run once
+        sampler.reset();
+        sampler.set_capacity(RA_MAIN_SAMPLES, /*recount*/ false);
+        sampler.set_threshold(RA_MAIN_ALT_COMPENSATED, /*recount*/ false);
+      }
+
+      const double alt = filter_alt.kf.state_vector()[0];
+      sampler.add_sample(alt);
+
+      if (sampler.is_sampled() &&
+          sampler.under_by_over<double>() > RA_TRUE_TO_FALSE_RATIO)
+        fsm.transfer(UserState::MAIN_DEPLOY);
       break;
     }
 
     case UserState::MAIN_DEPLOY: {
+      // <--- Next: activate pyro/servo and always transfer --->
+      ActivateDeployment(/*index*/ 1);
+      fsm.transfer(UserState::MAIN_DESCEND);
       break;
     }
 
     case UserState::MAIN_DESCEND: {
+      // !!!! Next: DETECT landing !!!!
+      if (fsm.on_enter()) {  // Run once
+        sampler.reset();
+        sampler.set_capacity(RA_LANDED_SAMPLES, /*recount*/ false);
+        sampler.set_threshold(RA_LANDED_VEL, /*recount*/ false);
+      }
+
+      const double vel = filter_alt.kf.state_vector()[1];
+      sampler.add_sample(std::abs(vel));
+
+      if (sampler.is_sampled() &&
+          sampler.under_by_over<double>() > RA_TRUE_TO_FALSE_RATIO)
+        fsm.transfer(UserState::LANDED);
       break;
     }
 
@@ -269,5 +397,21 @@ void ReadGNSS() {
     data.gnss[i].latitude        = gnss[i]->latitude();
     data.gnss[i].longitude       = gnss[i]->longitude();
     data.gnss[i].altitude_msl    = gnss[i]->altitude_msl();
+  }
+}
+
+void ActivateDeployment(const size_t index) {
+  switch (index) {
+    case 0: {  // Drogue/First Deployment
+      servo_a.write(RA_SERVO_A_RELEASE);
+      break;
+    }
+
+    case 1: {  // Main/Second Deployment
+      break;
+    }
+
+    default:
+      break;
   }
 }

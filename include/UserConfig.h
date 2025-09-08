@@ -16,7 +16,7 @@ constexpr size_t RA_NUM_GNSS = 1;
 /* THREAD LOOP INTERVALS */
 
 // IMU Reading
-constexpr uint32_t RA_INTERVAL_IMU_READING = 10ul;  // ms
+constexpr uint32_t RA_INTERVAL_IMU_READING = 5ul;  // ms
 
 // Altimeter Reading
 constexpr uint32_t RA_INTERVAL_ALTIMETER_READING = 100ul;  // ms
@@ -27,59 +27,79 @@ constexpr uint32_t RA_INTERVAL_GNSS_READING = 500ul;  // ms
 // FSM Evaluation
 constexpr uint32_t RA_INTERVAL_FSM_EVAL = 5ul;  // ms
 
+/* ACTUATOR SETTINGS */
+
+constexpr int RA_SERVO_MIN = 500;                                // us PWM
+constexpr int RA_SERVO_MAX = 2450;                               // us PWM
+constexpr int RA_SERVO_CEN = (RA_SERVO_MIN + RA_SERVO_MAX) / 2;  // us PWM
+
+constexpr int RA_SERVO_A_RELEASE = 0;    // deg
+constexpr int RA_SERVO_A_LOCK    = 180;  // deg
+
+/* SAMPLER SETTINGS */
+
+// True to false ratio for comparator
+constexpr double RA_TRUE_TO_FALSE_RATIO = 1.0;  // (#True / #False), 0.5 = 33.3% 1.0 = 50%, 2.0 = 66.7%
+
 /* LAUNCH CONFIGURATION */
 
 // Safeguard minimum time to motor burnout
-constexpr uint32_t RA_TIME_TO_BURNOUT_MIN = 1 * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_BURNOUT_MIN = 1.8 * 1000ul;  // ms
 
 // Safeguard maximum time to motor burnout
-constexpr uint32_t RA_TIME_TO_BURNOUT_MAX = 1 * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_BURNOUT_MAX = 2.5 * 1000ul;  // ms
 
 // Safeguard minimum time to apogee
-constexpr uint32_t RA_TIME_TO_APOGEE_MIN = 1 * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_APOGEE_MIN = 12 * 1000ul;  // ms
 
 // Safeguard maximum time to apogee
-constexpr uint32_t RA_TIME_TO_APOGEE_MAX = 1 * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_APOGEE_MAX = 17 * 1000ul;  // ms
 
 // Launch acceleration: acc. threshold (GT)
-constexpr double RA_LAUNCH_ACC = 40.0;  // m/s^2
+constexpr double RA_LAUNCH_ACC = 4.0;  // 9.81 m/s^2 (g)
 
 // Launch acceleration detection period
-constexpr uint32_t RA_LAUNCH_TON = 150ul;  // ms
+constexpr uint32_t RA_LAUNCH_TON     = 100ul;  // ms
+constexpr uint32_t RA_LAUNCH_SAMPLES = RA_LAUNCH_TON / RA_INTERVAL_FSM_EVAL;
 
 // Motor burnout detection: acc. threshold (LT)
-constexpr double RA_BURNOUT_ACC = 40.0;  // m/s^2
+constexpr double RA_BURNOUT_ACC = 6.0;  // 9.81 m/s^2 (g)
 
 // Motor burnout detection period
-constexpr uint32_t RA_BURNOUT_TON = 500ul;  // ms
+constexpr uint32_t RA_BURNOUT_TON     = 500ul;  // ms
+constexpr uint32_t RA_BURNOUT_SAMPLES = RA_BURNOUT_TON / RA_INTERVAL_FSM_EVAL;
 
 // Velocity at Apogee: vel. threshold (LT)
 constexpr double RA_APOGEE_VEL = 10.0;  // m/s
 
 // Velocity at Apogee detection period
-constexpr uint32_t RA_APOGEE_TON = 500ul;  // ms
+constexpr uint32_t RA_APOGEE_TON     = 500ul;  // ms
+constexpr uint32_t RA_APOGEE_SAMPLES = RA_APOGEE_TON / RA_INTERVAL_FSM_EVAL;
 
 // Drogue Descent Theoretical Velocity
-constexpr double RA_DROGUE_VEL = 15.0;  // m/s
+constexpr double RA_DROGUE_VEL = 17.5;  // m/s
 
 // Main Deployment Event Altitude: altitude threshold (LT)
-constexpr double RA_MAIN_ALT = 300.0;  // m
+constexpr double RA_MAIN_ALT_RAW = 250.0;  // m
 
 // Main Deployment Event Altitude detection period
-constexpr uint32_t RA_MAIN_TON = 1000ul;  // ms
+constexpr uint32_t RA_MAIN_TON     = 500ul;  // ms
+constexpr uint32_t RA_MAIN_SAMPLES = RA_MAIN_TON / RA_INTERVAL_FSM_EVAL;
 
 // Main Deployment Event Triggering Delay Compensation Multiplier
 constexpr double RA_MAIN_COMPENSATION_MULT = 2.0;
 
 // Main Deployment Event Triggering Delay Compensation Value
-constexpr double RA_MAIN_ALT_COMPENSATED = RA_MAIN_ALT + RA_MAIN_COMPENSATION_MULT * RA_DROGUE_VEL * (static_cast<double>(RA_MAIN_TON) / 1000.);  // m
+constexpr double RA_MAIN_ALT_COMPENSATED = RA_MAIN_ALT_RAW + RA_MAIN_COMPENSATION_MULT * RA_DROGUE_VEL * (static_cast<double>(RA_MAIN_TON) / 1000.);  // m
 
 // Velocity at Landed State: vel. threshold (LT)
 constexpr double RA_LANDED_VEL = 0.5;  // m/s
 
 // Velocity at Landed State detection period
-constexpr uint32_t RA_LANDED_TON = 5000ul;  // ms
+constexpr uint32_t RA_LANDED_TON     = 5000ul;  // ms
+constexpr uint32_t RA_LANDED_SAMPLES = RA_LANDED_TON / RA_INTERVAL_FSM_EVAL;
 
+// Static assertions validate settings
 namespace details::assertions {
   static_assert(RA_TIME_TO_BURNOUT_MAX >= RA_TIME_TO_BURNOUT_MIN, "Time to burnout is configured incorrectly!");
   static_assert(RA_TIME_TO_APOGEE_MAX >= RA_TIME_TO_APOGEE_MIN, "Time to apogee is configured incorrectly!");
