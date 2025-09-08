@@ -4,6 +4,12 @@
 #include <cstdint>
 #include <cstdlib>
 
+// File Name
+constexpr const char *RA_FILE_NAME = "MFC_LOGGER_";
+
+// File Extension
+constexpr const char *RA_FILE_EXT = "CSV";
+
 // Number of IMU sensors
 constexpr size_t RA_NUM_IMU = 1;
 
@@ -59,7 +65,7 @@ constexpr uint32_t RA_TIME_TO_APOGEE_MAX = 17 * 1000ul;  // ms
 constexpr double RA_LAUNCH_ACC = 4.0;  // 9.81 m/s^2 (g)
 
 // Launch acceleration detection period
-constexpr uint32_t RA_LAUNCH_TON     = 100ul;  // ms
+constexpr uint32_t RA_LAUNCH_TON     = 200ul;  // ms
 constexpr uint32_t RA_LAUNCH_SAMPLES = RA_LAUNCH_TON / RA_INTERVAL_FSM_EVAL;
 
 // Motor burnout detection: acc. threshold (LT)
@@ -98,6 +104,13 @@ constexpr double RA_LANDED_VEL = 0.5;  // m/s
 // Velocity at Landed State detection period
 constexpr uint32_t RA_LANDED_TON     = 5000ul;  // ms
 constexpr uint32_t RA_LANDED_SAMPLES = RA_LANDED_TON / RA_INTERVAL_FSM_EVAL;
+
+/* SD CARD LOGGER INTERVALS */
+
+constexpr uint32_t RA_SDLOGGER_INTERVAL_IDLE     = 1000ul;  // 1 Hz
+constexpr uint32_t RA_SDLOGGER_INTERVAL_SLOW     = 125ul;   // 8 Hz
+constexpr uint32_t RA_SDLOGGER_INTERVAL_FAST     = 50ul;    // 20 Hz
+constexpr uint32_t RA_SDLOGGER_INTERVAL_REALTIME = 20ul;    // 50 Hz
 
 // Static assertions validate settings
 namespace details::assertions {

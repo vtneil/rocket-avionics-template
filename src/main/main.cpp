@@ -1,5 +1,6 @@
 /* BEGIN INCLUDE SYSTEM LIBRARIES */
 #include <Arduino.h>          // Arduino Framework
+#include <File_Utility.h>     // File Utility
 #include <LibAvionics.h>      // Base Avionics Library and Utilities
 #include "SystemFunctions.h"  // Function Declarations
 #include "custom_kalman.h"    // Kalman Quick Table
@@ -49,8 +50,9 @@ struct SensorsHealth {
 
 /* BEGIN PERSISTENT STATE */
 // todo: EEPROM for persistent state
-UserFSM fsm;
-double  acc;
+UserFSM  fsm;
+double   acc;
+uint32_t seq_no{};
 /* END PERSISTENT STATE */
 
 /* BEGIN DATA MEMORY */
@@ -59,7 +61,12 @@ struct DataMemory {
   SensorAltimeter::Data altimeter[RA_NUM_ALTIMETER];
   SensorGNSS::Data      gnss[RA_NUM_GNSS];
 } data;
+String sd_buf;
 /* END DATA MEMORY */
+
+/* BEGIN SD CARD */
+FsUtil fs_sd;
+/* END SD CARD */
 
 /* BEGIN FILTERS */
 FilterT filter_alt;
@@ -67,10 +74,13 @@ FilterT filter_alt;
 
 /* BEGIN ACTUATORS */
 Servo servo_a;
+int   pos_a = RA_SERVO_A_LOCK;
 Servo servo_b;
+int   pos_b = 90;
 /* END ACTUATORS */
 
 /* BEGIN USER PRIVATE VARIABLES */
+hal::rtos::mutex_t mtx_sdio;
 hal::rtos::mutex_t mtx_spi;
 hal::rtos::mutex_t mtx_cdc;
 /* END USER PRIVATE VARIABLES */
@@ -79,29 +89,27 @@ hal::rtos::mutex_t mtx_cdc;
 uint32_t LoggerInterval() {
   switch (fsm.state()) {
     case UserState::STARTUP:
-      break;
     case UserState::IDLE_SAFE:
-      break;
+      return RA_SDLOGGER_INTERVAL_IDLE;
+
     case UserState::ARMED:
-      break;
     case UserState::PAD_PREOP:
-      break;
+      return RA_SDLOGGER_INTERVAL_SLOW;
+
     case UserState::POWERED:
-      break;
     case UserState::COASTING:
-      break;
+      return RA_SDLOGGER_INTERVAL_REALTIME;
+
     case UserState::DROGUE_DEPLOY:
-      break;
     case UserState::DROGUE_DESCEND:
-      break;
     case UserState::MAIN_DEPLOY:
-      break;
     case UserState::MAIN_DESCEND:
-      break;
+      return RA_SDLOGGER_INTERVAL_FAST;
+
     case UserState::LANDED:
-      break;
     case UserState::RECOVERED_SAFE:
-      break;
+    default:
+      return RA_SDLOGGER_INTERVAL_IDLE;
   }
 }
 /* END USER PRIVATE FUNCTIONS */
@@ -120,9 +128,9 @@ void UserSetupCDC() {
 }
 
 void UserSetupSPI() {
-  SPI.setMOSI(PA7);
-  SPI.setMISO(PA6);
-  SPI.setSCLK(PA5);
+  SPI.setMOSI(USER_GPIO_SPI1_MOSI);
+  SPI.setMISO(USER_GPIO_SPI1_MISO);
+  SPI.setSCLK(USER_GPIO_SPI1_SCK);
   SPI.begin();
 }
 /* END USER SETUP */
@@ -158,22 +166,66 @@ void CB_EvalFSM(void *) {
   });
 }
 
-void CB_Logger(void *) {
+void CB_SDLogger(void *) {
   hal::rtos::interval_loop(LoggerInterval(), LoggerInterval, [&]() -> void {
+    sd_buf = "";
+    csv_stream_lf(sd_buf)
+      << "MFC"
+      << seq_no
+      << millis()
+      << state_string(fsm.state())
+      << data.imu[0].acc_x
+      << data.imu[0].acc_y
+      << data.imu[0].acc_z
+      << filter_alt.kf.state_vector()[1]
+      << data.altimeter[0].altitude_m
+      << data.altimeter[0].pressure_hpa
+      << pos_a
+      << ReadCPUTemp();
+    mtx_sdio.exec([&]() -> void {
+      fs_sd.file() << sd_buf;
+    });
+  });
+}
+
+void CB_SDSave(void *) {
+  hal::rtos::interval_loop(1000ul, [&]() -> void {
+    mtx_sdio.exec([&]() -> void {
+      fs_sd.file().flush();
+    });
+  });
+}
+
+void CB_DebugLogger(void *) {
+  hal::rtos::interval_loop(100ul, [&]() -> void {
+    mtx_cdc.exec([&]() -> void {
+      Serial.print(sd_buf);
+    });
+  });
+}
+
+void CB_RetainDeployment(void *) {
+  hal::rtos::interval_loop(100ul, [&]() -> void {
+    RetainDeployment();
   });
 }
 
 /* END USER THREADS */
 
 void UserThreads() {
-  hal::rtos::scheduler.create(CB_EvalFSM, {.stack_size = 2048, .priority = osPriorityRealtime});
+  hal::rtos::scheduler.create(CB_EvalFSM, {.stack_size = 8192, .priority = osPriorityRealtime});
   hal::rtos::scheduler.create(CB_ReadIMU, {.stack_size = 2048, .priority = osPriorityHigh});
   hal::rtos::scheduler.create(CB_ReadAltimeter, {.stack_size = 2048, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_RetainDeployment, {.stack_size = 1024, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_SDLogger, {.stack_size = 8192, .priority = osPriorityNormal});
+  hal::rtos::scheduler.create(CB_SDSave, {.stack_size = 8192, .priority = osPriorityLow});
+  hal::rtos::scheduler.create(CB_DebugLogger, {.stack_size = 8192, .priority = osPriorityBelowNormal});
 }
 
 void setup() {
   /* BEGIN GPIO AND INTERFACES SETUP */
   UserSetupGPIO();
+  UserSetupActuator();
   UserSetupCDC();
   UserSetupUSART();
   UserSetupI2C();
@@ -181,7 +233,13 @@ void setup() {
   /* END GPIO AND INTERFACES SETUP */
 
   /* BEGIN STORAGES SETUP */
-  // todo: SD CARD
+  SD.setDx(USER_GPIO_SDIO_DAT0, USER_GPIO_SDIO_DAT1, USER_GPIO_SDIO_DAT2, USER_GPIO_SDIO_DAT3);
+  SD.setCMD(USER_GPIO_SDIO_CMD);
+  SD.setCK(USER_GPIO_SDIO_CK);
+  SD.begin();
+  fs_sd.find_file_name(RA_FILE_NAME, RA_FILE_EXT);
+  fs_sd.open_one<FsMode::WRITE>();
+  sd_buf.reserve(1024);
   /* END STORAGES SETUP */
 
   /* BEGIN SENSORS SETUP */
@@ -224,14 +282,14 @@ void setup() {
 }
 
 void EvalFSM() {
-  static bool                          state_succeeded      = false;
-  static uint32_t                      state_millis_start   = 0;
-  static uint32_t                      state_millis_elapsed = 0;
-  static xcore::sampler_t<512, double> sampler;
+  static uint32_t                       state_millis_start   = 0;
+  static uint32_t                       state_millis_elapsed = 0;
+  static xcore::sampler_t<2048, double> sampler;
 
   switch (fsm.state()) {
     case UserState::STARTUP: {
       // <--- Next: always transfer --->
+      digitalWrite(USER_GPIO_LED, 1);
       fsm.transfer(UserState::IDLE_SAFE);
       break;
     }
@@ -267,6 +325,7 @@ void EvalFSM() {
     case UserState::POWERED: {
       // !!!! Next: DETECT motor burnout !!!!
       if (fsm.on_enter()) {  // Run once
+        digitalWrite(USER_GPIO_LED, 0);
         sampler.reset();
         sampler.set_capacity(RA_BURNOUT_SAMPLES, /*recount*/ false);
         sampler.set_threshold(RA_BURNOUT_ACC, /*recount*/ false);
@@ -331,7 +390,7 @@ void EvalFSM() {
 
     case UserState::MAIN_DEPLOY: {
       // <--- Next: activate pyro/servo and always transfer --->
-      ActivateDeployment(/*index*/ 1);
+      // ActivateDeployment(/*index*/ 1);
       fsm.transfer(UserState::MAIN_DESCEND);
       break;
     }
@@ -354,6 +413,7 @@ void EvalFSM() {
     }
 
     case UserState::LANDED: {
+      digitalWrite(USER_GPIO_LED, 1);
       break;
     }
 
@@ -403,7 +463,8 @@ void ReadGNSS() {
 void ActivateDeployment(const size_t index) {
   switch (index) {
     case 0: {  // Drogue/First Deployment
-      servo_a.write(RA_SERVO_A_RELEASE);
+      pos_a = RA_SERVO_A_RELEASE;
+      servo_a.write(pos_a);
       break;
     }
 
@@ -414,4 +475,8 @@ void ActivateDeployment(const size_t index) {
     default:
       break;
   }
+}
+
+void RetainDeployment() {
+  servo_a.write(pos_a);
 }
