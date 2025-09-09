@@ -50,19 +50,19 @@ constexpr double RA_TRUE_TO_FALSE_RATIO = 1.0;  // (#True / #False), 0.5 = 33.3%
 /* LAUNCH CONFIGURATION */
 
 // Safeguard minimum time to motor burnout
-constexpr uint32_t RA_TIME_TO_BURNOUT_MIN = 1.8 * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_BURNOUT_MIN = 0.4 * 1000ul;  // ms
 
 // Safeguard maximum time to motor burnout
-constexpr uint32_t RA_TIME_TO_BURNOUT_MAX = 2.5 * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_BURNOUT_MAX = 0.7 * 1000ul;  // ms
 
 // Safeguard minimum time to apogee
-constexpr uint32_t RA_TIME_TO_APOGEE_MIN = 12 * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_APOGEE_MIN = 7 * 1000ul;  // ms
 
 // Safeguard maximum time to apogee
-constexpr uint32_t RA_TIME_TO_APOGEE_MAX = 17 * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_APOGEE_MAX = 10 * 1000ul;  // ms
 
 // Launch acceleration: acc. threshold (GT)
-constexpr double RA_LAUNCH_ACC = 4.0;  // 9.81 m/s^2 (g)
+constexpr double RA_LAUNCH_ACC = 10.0;  // 9.81 m/s^2 (g)
 
 // Launch acceleration detection period
 constexpr uint32_t RA_LAUNCH_TON     = 200ul;  // ms
@@ -108,9 +108,9 @@ constexpr uint32_t RA_LANDED_SAMPLES = RA_LANDED_TON / RA_INTERVAL_FSM_EVAL;
 /* SD CARD LOGGER INTERVALS */
 
 constexpr uint32_t RA_SDLOGGER_INTERVAL_IDLE     = 1000ul;  // 1 Hz
-constexpr uint32_t RA_SDLOGGER_INTERVAL_SLOW     = 125ul;   // 8 Hz
-constexpr uint32_t RA_SDLOGGER_INTERVAL_FAST     = 50ul;    // 20 Hz
-constexpr uint32_t RA_SDLOGGER_INTERVAL_REALTIME = 20ul;    // 50 Hz
+constexpr uint32_t RA_SDLOGGER_INTERVAL_SLOW     = 200ul;   // 5 Hz
+constexpr uint32_t RA_SDLOGGER_INTERVAL_FAST     = 100ul;   // 10 Hz
+constexpr uint32_t RA_SDLOGGER_INTERVAL_REALTIME = 50ul;    // 20 Hz
 
 // Static assertions validate settings
 namespace details::assertions {

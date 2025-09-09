@@ -69,7 +69,8 @@ FsUtil fs_sd;
 /* END SD CARD */
 
 /* BEGIN FILTERS */
-FilterT filter_alt;
+FilterT                      filter_alt;
+xcore::vdt<FILTER_ORDER - 1> vdt(static_cast<double>(RA_INTERVAL_ALTIMETER_READING) / 1000.);
 /* END FILTERS */
 
 /* BEGIN ACTUATORS */
@@ -178,6 +179,7 @@ void CB_SDLogger(void *) {
       << data.imu[0].acc_y
       << data.imu[0].acc_z
       << filter_alt.kf.state_vector()[1]
+      << filter_alt.kf.state_vector()[0]
       << data.altimeter[0].altitude_m
       << data.altimeter[0].pressure_hpa
       << pos_a
@@ -196,6 +198,9 @@ void CB_SDSave(void *) {
   });
 }
 
+
+osThreadId_t tid[7];
+
 void CB_DebugLogger(void *) {
   hal::rtos::interval_loop(100ul, [&]() -> void {
     mtx_cdc.exec([&]() -> void {
@@ -213,25 +218,16 @@ void CB_RetainDeployment(void *) {
 /* END USER THREADS */
 
 void UserThreads() {
-  hal::rtos::scheduler.create(CB_EvalFSM, {.stack_size = 8192, .priority = osPriorityRealtime});
-  hal::rtos::scheduler.create(CB_ReadIMU, {.stack_size = 2048, .priority = osPriorityHigh});
-  hal::rtos::scheduler.create(CB_ReadAltimeter, {.stack_size = 2048, .priority = osPriorityHigh});
-  hal::rtos::scheduler.create(CB_RetainDeployment, {.stack_size = 1024, .priority = osPriorityHigh});
-  hal::rtos::scheduler.create(CB_SDLogger, {.stack_size = 8192, .priority = osPriorityNormal});
-  hal::rtos::scheduler.create(CB_SDSave, {.stack_size = 8192, .priority = osPriorityLow});
-  hal::rtos::scheduler.create(CB_DebugLogger, {.stack_size = 8192, .priority = osPriorityBelowNormal});
+  tid[0] = hal::rtos::scheduler.create(CB_EvalFSM, {.name = "CB_EvalFSM", .stack_size = 8192, .priority = osPriorityRealtime});
+  tid[1] = hal::rtos::scheduler.create(CB_ReadIMU, {.name = "CB_ReadIMU", .stack_size = 8192, .priority = osPriorityHigh});
+  tid[2] = hal::rtos::scheduler.create(CB_ReadAltimeter, {.name = "CB_ReadAltimeter", .stack_size = 8192, .priority = osPriorityHigh});
+  tid[3] = hal::rtos::scheduler.create(CB_RetainDeployment, {.name = "CB_RetainDeployment", .stack_size = 8192, .priority = osPriorityHigh});
+  tid[4] = hal::rtos::scheduler.create(CB_SDLogger, {.name = "CB_SDLogger", .stack_size = 8192, .priority = osPriorityNormal});
+  tid[5] = hal::rtos::scheduler.create(CB_SDSave, {.name = "CB_SDSave", .stack_size = 8192, .priority = osPriorityLow});
+  tid[6] = hal::rtos::scheduler.create(CB_DebugLogger, {.name = "CB_DebugLogger", .stack_size = 8192, .priority = osPriorityBelowNormal});
 }
 
 void setup() {
-  /* BEGIN GPIO AND INTERFACES SETUP */
-  UserSetupGPIO();
-  UserSetupActuator();
-  UserSetupCDC();
-  UserSetupUSART();
-  UserSetupI2C();
-  UserSetupSPI();
-  /* END GPIO AND INTERFACES SETUP */
-
   /* BEGIN STORAGES SETUP */
   SD.setDx(USER_GPIO_SDIO_DAT0, USER_GPIO_SDIO_DAT1, USER_GPIO_SDIO_DAT2, USER_GPIO_SDIO_DAT3);
   SD.setCMD(USER_GPIO_SDIO_CMD);
@@ -241,6 +237,19 @@ void setup() {
   fs_sd.open_one<FsMode::WRITE>();
   sd_buf.reserve(1024);
   /* END STORAGES SETUP */
+
+  /* BEGIN GPIO AND INTERFACES SETUP */
+  UserSetupGPIO();
+  UserSetupActuator();
+  UserSetupCDC();
+  UserSetupUSART();
+  UserSetupI2C();
+  UserSetupSPI();
+  /* END GPIO AND INTERFACES SETUP */
+
+  /* BEGIN FILTERS SETUP */
+  filter_alt.F = vdt.generate_F();
+  /* END FILTERS SETUP */
 
   /* BEGIN SENSORS SETUP */
   // IMU
@@ -317,15 +326,16 @@ void EvalFSM() {
       sampler.add_sample(acc);
 
       if (sampler.is_sampled() &&
-          sampler.over_by_under<double>() > RA_TRUE_TO_FALSE_RATIO)
+          sampler.over_by_under<double>() > RA_TRUE_TO_FALSE_RATIO) {
+        digitalWrite(USER_GPIO_LED, 0);
         fsm.transfer(UserState::POWERED);
+      }
       break;
     }
 
     case UserState::POWERED: {
       // !!!! Next: DETECT motor burnout !!!!
       if (fsm.on_enter()) {  // Run once
-        digitalWrite(USER_GPIO_LED, 0);
         sampler.reset();
         sampler.set_capacity(RA_BURNOUT_SAMPLES, /*recount*/ false);
         sampler.set_threshold(RA_BURNOUT_ACC, /*recount*/ false);
