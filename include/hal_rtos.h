@@ -354,6 +354,20 @@ namespace hal::rtos {
     }
   }
 
+  template<typename Func>
+  [[noreturn]] void interval_loop(const TickType_t interval_ms, uint32_t &true_interval, Func &&func) {
+    const interval_delay delay_until(interval_ms);
+    uint32_t             last_ms = millis();
+    for (;;) {
+      delay_until([&]() -> void {
+        const uint32_t now_ms = millis();
+        true_interval         = now_ms - last_ms;
+        last_ms               = now_ms;
+        func();
+      });
+    }
+  }
+
   /**
    * Infinite loop that repeatedly executes a given function at specified intervals.
    *

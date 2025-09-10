@@ -69,8 +69,9 @@ FsUtil fs_sd;
 /* END SD CARD */
 
 /* BEGIN FILTERS */
+xcore::vdt<FILTER_ORDER - 1> vdt(static_cast<double>(RA_INTERVAL_FSM_EVAL) / 1000.);
 FilterT                      filter_alt;
-xcore::vdt<FILTER_ORDER - 1> vdt(static_cast<double>(RA_INTERVAL_ALTIMETER_READING) / 1000.);
+FilterT                      filter_acc;
 /* END FILTERS */
 
 /* BEGIN ACTUATORS */
@@ -145,19 +146,45 @@ void CB_ReadIMU(void *) {
     const double &az = data.imu[0].acc_z;
 
     // Total acceleration
-    acc = std::sqrt(std::abs(ax * ax) + std::abs(ay * ay) + std::abs(az + az));
+    acc = std::sqrt(std::abs(ax * ax) + std::abs(ay * ay) + std::abs(az * az));
+
+    // Compensate for gravity
+    acc = acc - 1.0;
+
+    // Update KF with measurement
+    filter_acc.kf.update(acc);
   });
 }
 
 void CB_ReadAltimeter(void *) {
   hal::rtos::interval_loop(RA_INTERVAL_ALTIMETER_READING, [&]() -> void {
     mtx_spi.exec(ReadAltimeter);
-    filter_alt.kf.predict().update(data.altimeter[0].altitude_m);
+
+    // Update KF with measurement
+    filter_alt.kf.update(data.altimeter[0].altitude_m);
   });
 }
 
 void CB_EvalFSM(void *) {
-  hal::rtos::interval_loop(RA_INTERVAL_FSM_EVAL, [&]() -> void {
+  uint32_t true_interval;
+  hal::rtos::interval_loop(RA_INTERVAL_FSM_EVAL, true_interval, [&]() -> void {
+    const uint32_t delta_interval = true_interval < RA_INTERVAL_FSM_EVAL
+                                      ? RA_INTERVAL_FSM_EVAL - true_interval
+                                      : true_interval - RA_INTERVAL_FSM_EVAL;
+    if (delta_interval > RA_JITTER_TOLERANCE_FSM_EVAL) {  // If tick jitter is too much
+      // Update dt for KF
+      vdt.update_dt(static_cast<double>(true_interval) / 1000.);
+
+      // Regenerate F with the new dt
+      filter_alt.F = vdt.generate_F();
+      filter_acc.F = vdt.generate_F();
+    }
+
+    // Predict states to "now"
+    filter_alt.kf.predict();
+    filter_acc.kf.predict();
+
+    // FSM with predicted states
     EvalFSM();
   });
 }
@@ -173,8 +200,9 @@ void CB_SDLogger(void *) {
       << data.imu[0].acc_x
       << data.imu[0].acc_y
       << data.imu[0].acc_z
-      << filter_alt.kf.state_vector()[1]
-      << filter_alt.kf.state_vector()[0]
+      << filter_acc.kf.state_vector()[0]  // ACC
+      << filter_alt.kf.state_vector()[1]  // VEL
+      << filter_alt.kf.state_vector()[0]  // POS
       << data.altimeter[0].altitude_m
       << data.altimeter[0].pressure_hpa
       << pos_a
@@ -241,6 +269,7 @@ void setup() {
 
   /* BEGIN FILTERS SETUP */
   filter_alt.F = vdt.generate_F();
+  filter_acc.F = vdt.generate_F();
   /* END FILTERS SETUP */
 
   /* BEGIN SENSORS SETUP */
@@ -291,19 +320,28 @@ void EvalFSM() {
   switch (fsm.state()) {
     case UserState::STARTUP: {
       // <--- Next: always transfer --->
-      digitalWrite(USER_GPIO_LED, 1);
+      digitalWrite(USER_GPIO_LED, 0);
       fsm.transfer(UserState::IDLE_SAFE);
       break;
     }
 
     case UserState::IDLE_SAFE: {
       // <--- Next: always transfer (should wait for uplink) --->
-      fsm.transfer(UserState::ARMED);
+      // <--- Wait for startup countdown instead to prevent accidental operations --->
+      if (fsm.on_enter()) {  // Run once
+        state_millis_start = millis();
+      }
+
+      state_millis_elapsed = millis() - state_millis_start;
+
+      if (state_millis_elapsed >= RA_STARTUP_COUNTDOWN)
+        fsm.transfer(UserState::ARMED);
       break;
     }
 
     case UserState::ARMED: {
       // <--- Next: always transfer (should wait for uplink) --->
+      digitalWrite(USER_GPIO_LED, 1);
       fsm.transfer(UserState::PAD_PREOP);
       break;
     }

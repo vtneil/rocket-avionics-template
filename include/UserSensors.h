@@ -22,6 +22,7 @@ public:
     acc.setOdr(ODR_6400Hz);
     acc.setBandwidth(BW_3200Hz);
     acc.setFilterSettling(FSP_16ms);
+    acc.enableLowNoiseOperation(true);
     acc.disableLowPassFilter(true);
     acc.disableHighPassFilter(true);
     return true;

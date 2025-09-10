@@ -33,6 +33,14 @@ constexpr uint32_t RA_INTERVAL_GNSS_READING = 500ul;  // ms
 // FSM Evaluation
 constexpr uint32_t RA_INTERVAL_FSM_EVAL = 5ul;  // ms
 
+// FSM Evaluation interval maximum jitter tolerance
+constexpr uint32_t RA_JITTER_TOLERANCE_FSM_EVAL = 1ul;  // ms
+
+/* BOARD FEATURES */
+
+// Start-up Countdown (for time-based arming)
+constexpr uint32_t RA_STARTUP_COUNTDOWN = 5. * 1000ul * 60;  // minutes -> us
+
 /* ACTUATOR SETTINGS */
 
 constexpr int RA_SERVO_MIN = 500;                                // us PWM
