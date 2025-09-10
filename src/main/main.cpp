@@ -11,7 +11,7 @@
 #endif
 
 #include <STM32SD.h>
-#include <Servo.h>
+#include <STM32Servo.h>
 /* END INCLUDE SYSTEM LIBRARIES */
 
 /* BEGIN INCLUDE USER'S IMPLEMENTATIONS */
@@ -74,10 +74,9 @@ xcore::vdt<FILTER_ORDER - 1> vdt(static_cast<double>(RA_INTERVAL_ALTIMETER_READI
 /* END FILTERS */
 
 /* BEGIN ACTUATORS */
-Servo servo_a;
-int   pos_a = RA_SERVO_A_LOCK;
-Servo servo_b;
-int   pos_b = 90;
+STM32ServoList servos(TIMER_SERVO);
+float          pos_a = RA_SERVO_A_LOCK;
+float          pos_b = 90;
 /* END ACTUATORS */
 
 /* BEGIN USER PRIVATE VARIABLES */
@@ -121,7 +120,7 @@ void UserSetupGPIO() {
 }
 
 void UserSetupActuator() {
-  servo_a.attach(USER_GPIO_SERVO_A, RA_SERVO_MIN, RA_SERVO_MAX, RA_SERVO_MAX);
+  servos.attach(USER_GPIO_SERVO_A, RA_SERVO_MIN, RA_SERVO_MAX, RA_SERVO_MAX);
 }
 
 void UserSetupCDC() {
@@ -139,9 +138,7 @@ void UserSetupSPI() {
 /* BEGIN USER THREADS */
 void CB_ReadIMU(void *) {
   hal::rtos::interval_loop(RA_INTERVAL_IMU_READING, [&]() -> void {
-    mtx_spi.exec([&]() -> void {
-      ReadIMU();
-    });
+    mtx_spi.exec(ReadIMU);
 
     const double &ax = data.imu[0].acc_x;
     const double &ay = data.imu[0].acc_y;
@@ -154,9 +151,7 @@ void CB_ReadIMU(void *) {
 
 void CB_ReadAltimeter(void *) {
   hal::rtos::interval_loop(RA_INTERVAL_ALTIMETER_READING, [&]() -> void {
-    mtx_spi.exec([&]() -> void {
-      ReadAltimeter();
-    });
+    mtx_spi.exec(ReadAltimeter);
     filter_alt.kf.predict().update(data.altimeter[0].altitude_m);
   });
 }
@@ -198,9 +193,6 @@ void CB_SDSave(void *) {
   });
 }
 
-
-osThreadId_t tid[7];
-
 void CB_DebugLogger(void *) {
   hal::rtos::interval_loop(100ul, [&]() -> void {
     mtx_cdc.exec([&]() -> void {
@@ -210,7 +202,7 @@ void CB_DebugLogger(void *) {
 }
 
 void CB_RetainDeployment(void *) {
-  hal::rtos::interval_loop(100ul, [&]() -> void {
+  hal::rtos::interval_loop(15ul, [&]() -> void {
     RetainDeployment();
   });
 }
@@ -218,13 +210,13 @@ void CB_RetainDeployment(void *) {
 /* END USER THREADS */
 
 void UserThreads() {
-  tid[0] = hal::rtos::scheduler.create(CB_EvalFSM, {.name = "CB_EvalFSM", .stack_size = 8192, .priority = osPriorityRealtime});
-  tid[1] = hal::rtos::scheduler.create(CB_ReadIMU, {.name = "CB_ReadIMU", .stack_size = 8192, .priority = osPriorityHigh});
-  tid[2] = hal::rtos::scheduler.create(CB_ReadAltimeter, {.name = "CB_ReadAltimeter", .stack_size = 8192, .priority = osPriorityHigh});
-  tid[3] = hal::rtos::scheduler.create(CB_RetainDeployment, {.name = "CB_RetainDeployment", .stack_size = 8192, .priority = osPriorityHigh});
-  tid[4] = hal::rtos::scheduler.create(CB_SDLogger, {.name = "CB_SDLogger", .stack_size = 8192, .priority = osPriorityNormal});
-  tid[5] = hal::rtos::scheduler.create(CB_SDSave, {.name = "CB_SDSave", .stack_size = 8192, .priority = osPriorityLow});
-  tid[6] = hal::rtos::scheduler.create(CB_DebugLogger, {.name = "CB_DebugLogger", .stack_size = 8192, .priority = osPriorityBelowNormal});
+  hal::rtos::scheduler.create(CB_EvalFSM, {.name = "CB_EvalFSM", .stack_size = 8192, .priority = osPriorityRealtime});
+  hal::rtos::scheduler.create(CB_ReadIMU, {.name = "CB_ReadIMU", .stack_size = 8192, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_ReadAltimeter, {.name = "CB_ReadAltimeter", .stack_size = 8192, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_RetainDeployment, {.name = "CB_RetainDeployment", .stack_size = 8192, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_SDLogger, {.name = "CB_SDLogger", .stack_size = 8192, .priority = osPriorityNormal});
+  hal::rtos::scheduler.create(CB_SDSave, {.name = "CB_SDSave", .stack_size = 8192, .priority = osPriorityLow});
+  hal::rtos::scheduler.create(CB_DebugLogger, {.name = "CB_DebugLogger", .stack_size = 8192, .priority = osPriorityBelowNormal});
 }
 
 void setup() {
@@ -281,6 +273,7 @@ void setup() {
     else
       sensors_health.gnss[i] = SensorStatus::SENSOR_ERR;
   }
+
   /* END SENSORS SETUP */
 
   /* BEGIN SYSTEM/KERNEL SETUP */
@@ -387,13 +380,17 @@ void EvalFSM() {
         sampler.reset();
         sampler.set_capacity(RA_MAIN_SAMPLES, /*recount*/ false);
         sampler.set_threshold(RA_MAIN_ALT_COMPENSATED, /*recount*/ false);
+        state_millis_start = millis();
       }
 
       const double alt = filter_alt.kf.state_vector()[0];
       sampler.add_sample(alt);
+      state_millis_elapsed = millis() - state_millis_start;
 
-      if (sampler.is_sampled() &&
-          sampler.under_by_over<double>() > RA_TRUE_TO_FALSE_RATIO)
+      if (state_millis_elapsed >= RA_TIME_TO_MAIN_MAX ||
+          (state_millis_elapsed >= RA_TIME_TO_MAIN_MIN &&
+           sampler.is_sampled() &&
+           sampler.under_by_over<double>() > RA_TRUE_TO_FALSE_RATIO))
         fsm.transfer(UserState::MAIN_DEPLOY);
       break;
     }
@@ -474,7 +471,7 @@ void ActivateDeployment(const size_t index) {
   switch (index) {
     case 0: {  // Drogue/First Deployment
       pos_a = RA_SERVO_A_RELEASE;
-      servo_a.write(pos_a);
+      servos[0].write(pos_a);
       break;
     }
 
@@ -488,5 +485,5 @@ void ActivateDeployment(const size_t index) {
 }
 
 void RetainDeployment() {
-  servo_a.write(pos_a);
+  servos[0].write(pos_a);
 }

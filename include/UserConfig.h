@@ -39,8 +39,8 @@ constexpr int RA_SERVO_MIN = 500;                                // us PWM
 constexpr int RA_SERVO_MAX = 2450;                               // us PWM
 constexpr int RA_SERVO_CEN = (RA_SERVO_MIN + RA_SERVO_MAX) / 2;  // us PWM
 
-constexpr int RA_SERVO_A_RELEASE = 0;    // deg
-constexpr int RA_SERVO_A_LOCK    = 180;  // deg
+constexpr float RA_SERVO_A_RELEASE = 0;    // deg
+constexpr float RA_SERVO_A_LOCK    = 180;  // deg
 
 /* SAMPLER SETTINGS */
 
@@ -55,10 +55,10 @@ constexpr uint32_t RA_TIME_TO_BURNOUT_MIN = 0.4 * 1000ul;  // ms
 // Safeguard maximum time to motor burnout
 constexpr uint32_t RA_TIME_TO_BURNOUT_MAX = 0.7 * 1000ul;  // ms
 
-// Safeguard minimum time to apogee
+// Safeguard minimum time to apogee - drogue deployment
 constexpr uint32_t RA_TIME_TO_APOGEE_MIN = 7 * 1000ul;  // ms
 
-// Safeguard maximum time to apogee
+// Safeguard maximum time to apogee - drogue deployment
 constexpr uint32_t RA_TIME_TO_APOGEE_MAX = 10 * 1000ul;  // ms
 
 // Launch acceleration: acc. threshold (GT)
@@ -75,6 +75,9 @@ constexpr double RA_BURNOUT_ACC = 6.0;  // 9.81 m/s^2 (g)
 constexpr uint32_t RA_BURNOUT_TON     = 500ul;  // ms
 constexpr uint32_t RA_BURNOUT_SAMPLES = RA_BURNOUT_TON / RA_INTERVAL_FSM_EVAL;
 
+// Apogee altitude (nominal for safeguard calculation)
+constexpr double RA_APOGEE_ALT = 450.0;  // m
+
 // Velocity at Apogee: vel. threshold (LT)
 constexpr double RA_APOGEE_VEL = 10.0;  // m/s
 
@@ -86,7 +89,16 @@ constexpr uint32_t RA_APOGEE_SAMPLES = RA_APOGEE_TON / RA_INTERVAL_FSM_EVAL;
 constexpr double RA_DROGUE_VEL = 17.5;  // m/s
 
 // Main Deployment Event Altitude: altitude threshold (LT)
-constexpr double RA_MAIN_ALT_RAW = 250.0;  // m
+constexpr double RA_MAIN_ALT_RAW = 150.0;  // m
+
+// Safeguard minimum time to main deployment
+constexpr uint32_t RA_TIME_TO_MAIN_NOM = ((RA_APOGEE_ALT - RA_MAIN_ALT_RAW) / RA_DROGUE_VEL) * 1000ul;  // ms
+
+// Safeguard minimum time to main deployment
+constexpr uint32_t RA_TIME_TO_MAIN_MIN = RA_TIME_TO_MAIN_NOM - 5000ul;  // ms
+
+// Safeguard maximum time to main deployment
+constexpr uint32_t RA_TIME_TO_MAIN_MAX = RA_TIME_TO_MAIN_NOM + 5000ul;  // ms
 
 // Main Deployment Event Altitude detection period
 constexpr uint32_t RA_MAIN_TON     = 500ul;  // ms
