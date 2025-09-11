@@ -73,7 +73,7 @@ constexpr uint32_t RA_TIME_TO_APOGEE_MIN = 7 * 1000ul;  // ms
 constexpr uint32_t RA_TIME_TO_APOGEE_MAX = 10 * 1000ul;  // ms
 
 // Launch acceleration: acc. threshold (GT)
-constexpr double RA_LAUNCH_ACC = 4.0;  // 9.81 m/s^2 (g)
+constexpr double RA_LAUNCH_ACC = 10.0;  // 9.81 m/s^2 (g)
 
 // Launch acceleration detection period
 constexpr uint32_t RA_LAUNCH_TON     = 200ul;  // ms
@@ -103,7 +103,7 @@ constexpr double RA_DROGUE_VEL = 17.5;  // m/s
 constexpr double RA_MAIN_ALT_RAW = 150.0;  // m
 
 // Safeguard minimum time to main deployment
-constexpr uint32_t RA_TIME_TO_MAIN_NOM = ((RA_APOGEE_ALT - RA_MAIN_ALT_RAW) / RA_DROGUE_VEL) * 1000ul;  // ms
+constexpr uint32_t RA_TIME_TO_MAIN_NOM = static_cast<uint32_t>((RA_APOGEE_ALT - RA_MAIN_ALT_RAW) / RA_DROGUE_VEL) * 1000ul;  // ms
 
 // Safeguard minimum time to main deployment
 constexpr uint32_t RA_TIME_TO_MAIN_MIN = RA_TIME_TO_MAIN_NOM - 5000ul;  // ms
@@ -127,6 +127,13 @@ constexpr double RA_LANDED_VEL = 0.5;  // m/s
 // Velocity at Landed State detection period
 constexpr uint32_t RA_LANDED_TON     = 5000ul;  // ms
 constexpr uint32_t RA_LANDED_SAMPLES = RA_LANDED_TON / RA_INTERVAL_FSM_EVAL;
+
+// Auto Zero Altitude stillness: vel. threshold (LT)
+constexpr double RA_AUTOZERO_VEL = 0.05;  // m/s
+
+// Auto Zero Altitude stillness detection period
+constexpr uint32_t RA_AUTOZERO_TON     = 5000ul;  // ms
+constexpr uint32_t RA_AUTOZERO_SAMPLES = RA_AUTOZERO_TON / RA_INTERVAL_FSM_EVAL;
 
 /* SD CARD LOGGER INTERVALS */
 

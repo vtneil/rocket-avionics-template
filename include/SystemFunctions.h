@@ -16,6 +16,8 @@ extern void ActivateDeployment(size_t index);
  */
 extern void RetainDeployment();
 
+extern void AutoZeroAlt();
+
 namespace internal {
   inline int32_t read_vref() {
     return __LL_ADC_CALC_VREFANALOG_VOLTAGE(analogRead(AVREF), LL_ADC_RESOLUTION_16B);

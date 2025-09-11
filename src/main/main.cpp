@@ -49,9 +49,11 @@ struct SensorsHealth {
 /* END SENSOR STATUSES */
 
 /* BEGIN PERSISTENT STATE */
-// todo: EEPROM for persistent state
 UserFSM  fsm;
 double   acc;
+double   alt_ref;  // Altitude at ground
+double   alt_agl;  // Altitude above ground
+double   apogee_raw;
 uint32_t seq_no{};
 /* END PERSISTENT STATE */
 
@@ -158,6 +160,13 @@ void CB_ReadAltimeter(void *) {
 
     // Update KF with measurement
     filter_alt.kf.update(data.altimeter[0].altitude_m);
+
+    // Update altitude above ground
+    alt_agl = data.altimeter[0].altitude_m - alt_ref;
+
+    // Update apogee
+    if (data.altimeter[0].altitude_m > apogee_raw)
+      apogee_raw = data.altimeter[0].altitude_m;
   });
 }
 
@@ -185,6 +194,12 @@ void CB_EvalFSM(void *) {
   });
 }
 
+void CB_AutoZeroAlt(void *) {
+  hal::rtos::interval_loop(RA_INTERVAL_FSM_EVAL, [&]() -> void {
+    AutoZeroAlt();
+  });
+}
+
 void CB_ConstructData(void *) {
   hal::rtos::interval_loop(RA_INTERVAL_CONSTRUCT, [&]() -> void {
     sd_buf = "";
@@ -193,14 +208,20 @@ void CB_ConstructData(void *) {
       << seq_no
       << millis()
       << state_string(fsm.state())
+
       << data.imu[0].acc_x
       << data.imu[0].acc_y
       << data.imu[0].acc_z
       << acc
+
       << filter_alt.kf.state_vector()[1]  // VEL
       << filter_alt.kf.state_vector()[0]  // POS
       << data.altimeter[0].altitude_m
       << data.altimeter[0].pressure_hpa
+      << alt_agl
+      << alt_ref
+      << apogee_raw
+
       << pos_a
       << ReadCPUTemp();
   });
@@ -240,13 +261,18 @@ void CB_RetainDeployment(void *) {
 
 void UserThreads() {
   hal::rtos::scheduler.create(CB_EvalFSM, {.name = "CB_EvalFSM", .stack_size = 8192, .priority = osPriorityRealtime});
+
   hal::rtos::scheduler.create(CB_ReadIMU, {.name = "CB_ReadIMU", .stack_size = 8192, .priority = osPriorityHigh});
   hal::rtos::scheduler.create(CB_ReadAltimeter, {.name = "CB_ReadAltimeter", .stack_size = 8192, .priority = osPriorityHigh});
-  hal::rtos::scheduler.create(CB_RetainDeployment, {.name = "CB_RetainDeployment", .stack_size = 8192, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_RetainDeployment, {.name = "CB_RetainDeployment", .stack_size = 4096, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_AutoZeroAlt, {.name = "CB_AutoZeroAlt", .stack_size = 4096, .priority = osPriorityHigh});
+
   hal::rtos::scheduler.create(CB_ConstructData, {.name = "CB_ConstructData", .stack_size = 8192, .priority = osPriorityNormal});
   hal::rtos::scheduler.create(CB_SDLogger, {.name = "CB_SDLogger", .stack_size = 8192, .priority = osPriorityNormal});
-  hal::rtos::scheduler.create(CB_SDSave, {.name = "CB_SDSave", .stack_size = 8192, .priority = osPriorityLow});
+
   hal::rtos::scheduler.create(CB_DebugLogger, {.name = "CB_DebugLogger", .stack_size = 8192, .priority = osPriorityBelowNormal});
+
+  hal::rtos::scheduler.create(CB_SDSave, {.name = "CB_SDSave", .stack_size = 8192, .priority = osPriorityLow});
 }
 
 void setup() {
@@ -395,7 +421,7 @@ void EvalFSM() {
       }
 
       const double vel = filter_alt.kf.state_vector()[1];
-      sampler.add_sample(vel);
+      sampler.add_sample(std::abs(vel));
       state_millis_elapsed = millis() - state_millis_start;
 
       if (state_millis_elapsed >= RA_TIME_TO_APOGEE_MAX ||
@@ -525,4 +551,26 @@ void ActivateDeployment(const size_t index) {
 
 void RetainDeployment() {
   servos[0].write(pos_a);
+}
+
+void AutoZeroAlt() {
+  static xcore::sampler_t<RA_AUTOZERO_SAMPLES, double> sampler;
+  sampler.set_threshold(RA_AUTOZERO_VEL, /*recount*/ false);
+
+  switch (fsm.state()) {
+    case UserState::IDLE_SAFE:
+    case UserState::ARMED:
+    case UserState::PAD_PREOP: {
+      const double vel = filter_alt.kf.state_vector()[1];
+      sampler.add_sample(std::abs(vel));
+      if (sampler.is_sampled()) {
+        if (sampler.under_by_over<double>() > 3.0)
+          alt_ref = data.altimeter[0].altitude_m;
+        sampler.reset();
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
