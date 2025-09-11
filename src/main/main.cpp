@@ -71,7 +71,6 @@ FsUtil fs_sd;
 /* BEGIN FILTERS */
 xcore::vdt<FILTER_ORDER - 1> vdt(static_cast<double>(RA_INTERVAL_FSM_EVAL) / 1000.);
 FilterT                      filter_alt;
-FilterT                      filter_acc;
 /* END FILTERS */
 
 /* BEGIN ACTUATORS */
@@ -150,9 +149,6 @@ void CB_ReadIMU(void *) {
 
     // Compensate for gravity
     acc = acc - 1.0;
-
-    // Update KF with measurement
-    filter_acc.kf.update(acc);
   });
 }
 
@@ -171,26 +167,26 @@ void CB_EvalFSM(void *) {
     const uint32_t delta_interval = true_interval < RA_INTERVAL_FSM_EVAL
                                       ? RA_INTERVAL_FSM_EVAL - true_interval
                                       : true_interval - RA_INTERVAL_FSM_EVAL;
-    if (delta_interval > RA_JITTER_TOLERANCE_FSM_EVAL) {  // If tick jitter is too much
+
+    if (true_interval != 0 &&                             // Excluding first run
+        delta_interval > RA_JITTER_TOLERANCE_FSM_EVAL) {  // If tick jitter is too much
       // Update dt for KF
       vdt.update_dt(static_cast<double>(true_interval) / 1000.);
 
       // Regenerate F with the new dt
       filter_alt.F = vdt.generate_F();
-      filter_acc.F = vdt.generate_F();
     }
 
     // Predict states to "now"
     filter_alt.kf.predict();
-    filter_acc.kf.predict();
 
     // FSM with predicted states
     EvalFSM();
   });
 }
 
-void CB_SDLogger(void *) {
-  hal::rtos::interval_loop(LoggerInterval(), LoggerInterval, [&]() -> void {
+void CB_ConstructData(void *) {
+  hal::rtos::interval_loop(RA_INTERVAL_CONSTRUCT, [&]() -> void {
     sd_buf = "";
     csv_stream_lf(sd_buf)
       << "MFC"
@@ -200,13 +196,18 @@ void CB_SDLogger(void *) {
       << data.imu[0].acc_x
       << data.imu[0].acc_y
       << data.imu[0].acc_z
-      << filter_acc.kf.state_vector()[0]  // ACC
+      << acc
       << filter_alt.kf.state_vector()[1]  // VEL
       << filter_alt.kf.state_vector()[0]  // POS
       << data.altimeter[0].altitude_m
       << data.altimeter[0].pressure_hpa
       << pos_a
       << ReadCPUTemp();
+  });
+}
+
+void CB_SDLogger(void *) {
+  hal::rtos::interval_loop(LoggerInterval(), LoggerInterval, [&]() -> void {
     mtx_sdio.exec([&]() -> void {
       fs_sd.file() << sd_buf;
     });
@@ -242,6 +243,7 @@ void UserThreads() {
   hal::rtos::scheduler.create(CB_ReadIMU, {.name = "CB_ReadIMU", .stack_size = 8192, .priority = osPriorityHigh});
   hal::rtos::scheduler.create(CB_ReadAltimeter, {.name = "CB_ReadAltimeter", .stack_size = 8192, .priority = osPriorityHigh});
   hal::rtos::scheduler.create(CB_RetainDeployment, {.name = "CB_RetainDeployment", .stack_size = 8192, .priority = osPriorityHigh});
+  hal::rtos::scheduler.create(CB_ConstructData, {.name = "CB_ConstructData", .stack_size = 8192, .priority = osPriorityNormal});
   hal::rtos::scheduler.create(CB_SDLogger, {.name = "CB_SDLogger", .stack_size = 8192, .priority = osPriorityNormal});
   hal::rtos::scheduler.create(CB_SDSave, {.name = "CB_SDSave", .stack_size = 8192, .priority = osPriorityLow});
   hal::rtos::scheduler.create(CB_DebugLogger, {.name = "CB_DebugLogger", .stack_size = 8192, .priority = osPriorityBelowNormal});
@@ -269,7 +271,6 @@ void setup() {
 
   /* BEGIN FILTERS SETUP */
   filter_alt.F = vdt.generate_F();
-  filter_acc.F = vdt.generate_F();
   /* END FILTERS SETUP */
 
   /* BEGIN SENSORS SETUP */
@@ -354,7 +355,7 @@ void EvalFSM() {
         sampler.set_threshold(RA_LAUNCH_ACC, /*recount*/ false);
       }
 
-      sampler.add_sample(acc);
+      sampler.add_sample(acc);  // Use raw acceleration, unfiltered
 
       if (sampler.is_sampled() &&
           sampler.over_by_under<double>() > RA_TRUE_TO_FALSE_RATIO) {

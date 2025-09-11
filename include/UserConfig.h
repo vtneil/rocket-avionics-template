@@ -36,10 +36,13 @@ constexpr uint32_t RA_INTERVAL_FSM_EVAL = 5ul;  // ms
 // FSM Evaluation interval maximum jitter tolerance
 constexpr uint32_t RA_JITTER_TOLERANCE_FSM_EVAL = 1ul;  // ms
 
+// Data Construct
+constexpr uint32_t RA_INTERVAL_CONSTRUCT = 50ul;  // ms
+
 /* BOARD FEATURES */
 
 // Start-up Countdown (for time-based arming)
-constexpr uint32_t RA_STARTUP_COUNTDOWN = 5. * 1000ul * 60;  // minutes -> us
+constexpr uint32_t RA_STARTUP_COUNTDOWN = 5. * 1000ul;  // minutes -> ms
 
 /* ACTUATOR SETTINGS */
 
@@ -70,7 +73,7 @@ constexpr uint32_t RA_TIME_TO_APOGEE_MIN = 7 * 1000ul;  // ms
 constexpr uint32_t RA_TIME_TO_APOGEE_MAX = 10 * 1000ul;  // ms
 
 // Launch acceleration: acc. threshold (GT)
-constexpr double RA_LAUNCH_ACC = 10.0;  // 9.81 m/s^2 (g)
+constexpr double RA_LAUNCH_ACC = 4.0;  // 9.81 m/s^2 (g)
 
 // Launch acceleration detection period
 constexpr uint32_t RA_LAUNCH_TON     = 200ul;  // ms

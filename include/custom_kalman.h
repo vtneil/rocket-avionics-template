@@ -23,6 +23,7 @@ struct FilterT {
   xcore::numeric_matrix<1, 1>                       R = xcore::numeric_matrix<1, 1>::diagonals(BASE_NOISE);
 
   xcore::r_iae_kalman_filter_t<FILTER_ORDER, 1, 1> kf{F, B, H, Q, R, x0, P0, 0.20, 0.05, 2.5, 1.e-12};
+  // xcore::kalman_filter_t<FILTER_ORDER, 1, 1> kf{F, B, H, Q, R, x0, P0};
 };
 
 #endif  //MINI_FC_FIRMWARE_KALMAN_H
