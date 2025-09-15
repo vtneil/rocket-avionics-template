@@ -117,7 +117,7 @@ constexpr uint32_t RA_TIME_TO_MAIN_NOM = static_cast<uint32_t>((RA_APOGEE_ALT - 
 constexpr uint32_t RA_TIME_TO_MAIN_MIN = RA_TIME_TO_MAIN_NOM * (1.00 - 0.15);  // ms
 
 // Safeguard maximum time to main deployment
-constexpr uint32_t RA_TIME_TO_MAIN_MAX = RA_TIME_TO_MAIN_NOM * (1.00 + 0.10);  // ms
+constexpr uint32_t RA_TIME_TO_MAIN_MAX = RA_TIME_TO_MAIN_NOM * (1.00 + 0.05);  // ms
 
 // Main Deployment Event Altitude detection period
 constexpr uint32_t RA_MAIN_TON     = 500ul;  // ms

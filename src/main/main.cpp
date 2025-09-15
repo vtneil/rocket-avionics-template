@@ -216,27 +216,27 @@ void CB_ConstructData(void *) {
   hal::rtos::interval_loop(RA_INTERVAL_CONSTRUCT, [&]() -> void {
     sd_buf = "";
     csv_stream_lf(sd_buf)
-      // << "MFC"
-      // << seq_no++
-      // << millis()
-      // << state_string(fsm.state())
+      << "MFC"
+      << seq_no++
+      << millis()
+      << state_string(fsm.state())
 
-      // << data.imu[0].acc_x
-      // << data.imu[0].acc_y
-      // << data.imu[0].acc_z
+      << data.imu[0].acc_x
+      << data.imu[0].acc_y
+      << data.imu[0].acc_z
       << acc
-      << filter_acc.kf.state()
+      << filter_acc.kf.state()  // ACC
 
-      // << filter_alt.kf.state_vector()[1]  // VEL
-      // << filter_alt.kf.state_vector()[0]  // POS
-      // << data.altimeter[0].altitude_m
-      // << data.altimeter[0].pressure_hpa
-      // << alt_agl
-      // << alt_ref
-      // << apogee_raw
+      << filter_alt.kf.state_vector()[1]  // VEL
+      << filter_alt.kf.state_vector()[0]  // POS
+      << data.altimeter[0].altitude_m
+      << data.altimeter[0].pressure_hpa
+      << alt_agl
+      << alt_ref
+      << apogee_raw
 
-      // << pos_a
-      // << ReadCPUTemp()
+      << pos_a  // Servo A
+      << ReadCPUTemp()
       //
       ;
   });
