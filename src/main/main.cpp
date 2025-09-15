@@ -207,7 +207,7 @@ void CB_EvalFSM(void *) {
 }
 
 void CB_AutoZeroAlt(void *) {
-  hal::rtos::interval_loop(RA_INTERVAL_FSM_EVAL, [&]() -> void {
+  hal::rtos::interval_loop(RA_INTERVAL_AUTOZERO, [&]() -> void {
     AutoZeroAlt();
   });
 }
@@ -594,7 +594,7 @@ void AutoZeroAlt() {
       const double vel = filter_alt.kf.state_vector()[1];
       sampler.add_sample(std::abs(vel));
       if (sampler.is_sampled()) {
-        if (sampler.under_by_over<double>() > 3.0)
+        if (sampler.under_by_over<double>() > 3.0)  // 75%
           alt_ref = data.altimeter[0].altitude_m;
         sampler.reset();
       }

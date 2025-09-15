@@ -39,6 +39,9 @@ constexpr uint32_t RA_JITTER_TOLERANCE_FSM_EVAL = 1ul;  // ms
 // Data Construct
 constexpr uint32_t RA_INTERVAL_CONSTRUCT = 50ul;  // ms
 
+// Altitude Auto-Zero
+constexpr uint32_t RA_INTERVAL_AUTOZERO = 50ul;  // ms
+
 /* BOARD FEATURES */
 
 // Start-up Countdown (for time-based arming)
@@ -141,7 +144,7 @@ constexpr double RA_AUTOZERO_VEL = 0.30;  // m/s
 
 // Auto Zero Altitude stillness detection period
 constexpr uint32_t RA_AUTOZERO_TON     = 5000ul;  // ms
-constexpr uint32_t RA_AUTOZERO_SAMPLES = RA_AUTOZERO_TON / RA_INTERVAL_FSM_EVAL;
+constexpr uint32_t RA_AUTOZERO_SAMPLES = RA_AUTOZERO_TON / RA_INTERVAL_AUTOZERO;
 
 /* SD CARD LOGGER INTERVALS */
 
