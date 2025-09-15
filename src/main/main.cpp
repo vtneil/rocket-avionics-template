@@ -15,7 +15,7 @@
 /* END INCLUDE SYSTEM LIBRARIES */
 
 /* BEGIN INCLUDE USER'S IMPLEMENTATIONS */
-#include "UserConfig.h"   // User's Custom Configurations
+#include "UserConfig.h"
 #include "UserPins.h"     // User's Pins Mapping
 #include "UserSensors.h"  // User's Hardware Implementations
 #include "UserFSM.h"      // User's FSM States
@@ -71,8 +71,9 @@ FsUtil fs_sd;
 /* END SD CARD */
 
 /* BEGIN FILTERS */
-xcore::vdt<FILTER_ORDER - 1> vdt(static_cast<double>(RA_INTERVAL_FSM_EVAL) / 1000.);
-FilterT                      filter_alt;
+xcore::vdt<FILTER_ORDER - 1> vdt(static_cast<double>(RA_INTERVAL_FSM_EVAL) * 0.001);
+Filter1T                     filter_acc;
+Filter2T                     filter_alt;
 /* END FILTERS */
 
 /* BEGIN ACTUATORS */
@@ -151,22 +152,31 @@ void CB_ReadIMU(void *) {
 
     // Compensate for gravity
     acc = acc - 1.0;
+
+    // Update KF with measurement
+    filter_acc.kf.update({acc});
   });
 }
 
 void CB_ReadAltimeter(void *) {
+  static double prev_alt = 0.;
+  static double vel      = 0.;
   hal::rtos::interval_loop(RA_INTERVAL_ALTIMETER_READING, [&]() -> void {
     mtx_spi.exec(ReadAltimeter);
 
+    // Calculate velocity
+    vel      = (data.altimeter[0].altitude_m - prev_alt) / (static_cast<double>(RA_INTERVAL_ALTIMETER_READING) * 0.001);
+    prev_alt = data.altimeter[0].altitude_m;
+
     // Update KF with measurement
-    filter_alt.kf.update(data.altimeter[0].altitude_m);
+    filter_alt.kf.update({data.altimeter[0].altitude_m, vel});
 
     // Update altitude above ground
     alt_agl = data.altimeter[0].altitude_m - alt_ref;
 
     // Update apogee
-    if (data.altimeter[0].altitude_m > apogee_raw)
-      apogee_raw = data.altimeter[0].altitude_m;
+    if (alt_agl > apogee_raw)
+      apogee_raw = alt_agl;
   });
 }
 
@@ -177,16 +187,18 @@ void CB_EvalFSM(void *) {
                                       ? RA_INTERVAL_FSM_EVAL - true_interval
                                       : true_interval - RA_INTERVAL_FSM_EVAL;
 
-    if (true_interval != 0 &&                             // Excluding first run
+    if (true_interval != 0 &&                             // Excluding the first run
         delta_interval > RA_JITTER_TOLERANCE_FSM_EVAL) {  // If tick jitter is too much
       // Update dt for KF
-      vdt.update_dt(static_cast<double>(true_interval) / 1000.);
+      vdt.update_dt(static_cast<double>(true_interval) * 0.001);
 
       // Regenerate F with the new dt
+      filter_acc.F = vdt.generate_F();
       filter_alt.F = vdt.generate_F();
     }
 
     // Predict states to "now"
+    filter_acc.kf.predict();
     filter_alt.kf.predict();
 
     // FSM with predicted states
@@ -204,26 +216,29 @@ void CB_ConstructData(void *) {
   hal::rtos::interval_loop(RA_INTERVAL_CONSTRUCT, [&]() -> void {
     sd_buf = "";
     csv_stream_lf(sd_buf)
-      << "MFC"
-      << seq_no
-      << millis()
-      << state_string(fsm.state())
+      // << "MFC"
+      // << seq_no++
+      // << millis()
+      // << state_string(fsm.state())
 
-      << data.imu[0].acc_x
-      << data.imu[0].acc_y
-      << data.imu[0].acc_z
+      // << data.imu[0].acc_x
+      // << data.imu[0].acc_y
+      // << data.imu[0].acc_z
       << acc
+      << filter_acc.kf.state()
 
-      << filter_alt.kf.state_vector()[1]  // VEL
-      << filter_alt.kf.state_vector()[0]  // POS
-      << data.altimeter[0].altitude_m
-      << data.altimeter[0].pressure_hpa
-      << alt_agl
-      << alt_ref
-      << apogee_raw
+      // << filter_alt.kf.state_vector()[1]  // VEL
+      // << filter_alt.kf.state_vector()[0]  // POS
+      // << data.altimeter[0].altitude_m
+      // << data.altimeter[0].pressure_hpa
+      // << alt_agl
+      // << alt_ref
+      // << apogee_raw
 
-      << pos_a
-      << ReadCPUTemp();
+      // << pos_a
+      // << ReadCPUTemp()
+      //
+      ;
   });
 }
 
@@ -297,6 +312,7 @@ void setup() {
 
   /* BEGIN FILTERS SETUP */
   filter_alt.F = vdt.generate_F();
+  filter_acc.F = vdt.generate_F();
   /* END FILTERS SETUP */
 
   /* BEGIN SENSORS SETUP */
@@ -340,9 +356,10 @@ void setup() {
 }
 
 void EvalFSM() {
-  static uint32_t                       state_millis_start   = 0;
-  static uint32_t                       state_millis_elapsed = 0;
-  static xcore::sampler_t<2048, double> sampler;
+  static uint32_t                                            state_millis_start   = 0;
+  static uint32_t                                            state_millis_elapsed = 0;
+  static xcore::sampler_t<2048, double>                      sampler;
+  static xcore::sampler_t<RA_MAIN_OVERSPEED_SAMPLES, double> sampler_overspeed;
 
   switch (fsm.state()) {
     case UserState::STARTUP: {
@@ -361,7 +378,8 @@ void EvalFSM() {
 
       state_millis_elapsed = millis() - state_millis_start;
 
-      if (state_millis_elapsed >= RA_STARTUP_COUNTDOWN)
+      if (!RA_STARTUP_COUNTDOWN_ENABLED ||
+          state_millis_elapsed >= RA_STARTUP_COUNTDOWN)
         fsm.transfer(UserState::ARMED);
       break;
     }
@@ -381,7 +399,8 @@ void EvalFSM() {
         sampler.set_threshold(RA_LAUNCH_ACC, /*recount*/ false);
       }
 
-      sampler.add_sample(acc);  // Use raw acceleration, unfiltered
+      // sampler.add_sample(acc);  // Use raw acceleration, unfiltered
+      sampler.add_sample(filter_acc.kf.state());  // Use filtered acceleration
 
       if (sampler.is_sampled() &&
           sampler.over_by_under<double>() > RA_TRUE_TO_FALSE_RATIO) {
@@ -400,7 +419,8 @@ void EvalFSM() {
         state_millis_start = millis();
       }
 
-      sampler.add_sample(acc);
+      // sampler.add_sample(acc);  // Use raw acceleration, unfiltered
+      sampler.add_sample(filter_acc.kf.state());  // Use filtered acceleration
       state_millis_elapsed = millis() - state_millis_start;
 
       if (state_millis_elapsed >= RA_TIME_TO_BURNOUT_MAX ||
@@ -445,18 +465,28 @@ void EvalFSM() {
         sampler.reset();
         sampler.set_capacity(RA_MAIN_SAMPLES, /*recount*/ false);
         sampler.set_threshold(RA_MAIN_ALT_COMPENSATED, /*recount*/ false);
+        sampler_overspeed.reset();
+        sampler_overspeed.set_threshold(RA_MAIN_OVERSPEED_VEL);
         state_millis_start = millis();
       }
 
-      const double alt = filter_alt.kf.state_vector()[0];
-      sampler.add_sample(alt);
+      sampler.add_sample(alt_agl);
+      const double vel = filter_alt.kf.state_vector()[1];
+      sampler_overspeed.add_sample(std::abs(vel));
       state_millis_elapsed = millis() - state_millis_start;
 
-      if (state_millis_elapsed >= RA_TIME_TO_MAIN_MAX ||
-          (state_millis_elapsed >= RA_TIME_TO_MAIN_MIN &&
-           sampler.is_sampled() &&
-           sampler.under_by_over<double>() > RA_TRUE_TO_FALSE_RATIO))
+      const bool cond_timeout   = state_millis_elapsed >= RA_TIME_TO_MAIN_MAX;
+      const bool cond_min_time  = state_millis_elapsed >= RA_TIME_TO_MAIN_MIN;
+      const bool cond_alt_lower = sampler.is_sampled() &&
+                                  sampler.under_by_over<double>() > RA_TRUE_TO_FALSE_RATIO;
+      const bool cond_overspeed = sampler_overspeed.is_sampled() &&
+                                  sampler_overspeed.over_by_under<double>() > RA_TRUE_TO_FALSE_RATIO;
+
+      if ((cond_timeout) ||
+          (cond_min_time && cond_alt_lower) ||
+          (cond_min_time && cond_overspeed))
         fsm.transfer(UserState::MAIN_DEPLOY);
+
       break;
     }
 
