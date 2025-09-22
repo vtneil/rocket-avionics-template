@@ -73,7 +73,7 @@ FsUtil fs_sd;
 /* BEGIN FILTERS */
 xcore::vdt<FILTER_ORDER - 1> vdt(static_cast<double>(RA_INTERVAL_FSM_EVAL) * 0.001);
 Filter1T                     filter_acc;
-Filter2T                     filter_alt;
+Filter1T                     filter_alt;
 /* END FILTERS */
 
 /* BEGIN ACTUATORS */
@@ -119,7 +119,9 @@ uint32_t LoggerInterval() {
 
 /* BEGIN USER SETUP */
 void UserSetupGPIO() {
-  pinMode(USER_GPIO_LED, OUTPUT);
+  if constexpr (RA_LED_ENABLED) {
+    pinMode(USER_GPIO_LED, OUTPUT);
+  }
 }
 
 void UserSetupActuator() {
@@ -127,7 +129,9 @@ void UserSetupActuator() {
 }
 
 void UserSetupCDC() {
-  Serial.begin();
+  if constexpr (RA_USB_DEBUG_ENABLED) {
+    Serial.begin();
+  }
 }
 
 void UserSetupSPI() {
@@ -159,17 +163,11 @@ void CB_ReadIMU(void *) {
 }
 
 void CB_ReadAltimeter(void *) {
-  static double prev_alt = 0.;
-  static double vel      = 0.;
   hal::rtos::interval_loop(RA_INTERVAL_ALTIMETER_READING, [&]() -> void {
     mtx_spi.exec(ReadAltimeter);
 
-    // Calculate velocity
-    vel      = (data.altimeter[0].altitude_m - prev_alt) / (static_cast<double>(RA_INTERVAL_ALTIMETER_READING) * 0.001);
-    prev_alt = data.altimeter[0].altitude_m;
-
     // Update KF with measurement
-    filter_alt.kf.update({data.altimeter[0].altitude_m, vel});
+    filter_alt.kf.update({data.altimeter[0].altitude_m});
 
     // Update altitude above ground
     alt_agl = data.altimeter[0].altitude_m - alt_ref;
@@ -279,13 +277,18 @@ void UserThreads() {
 
   hal::rtos::scheduler.create(CB_ReadIMU, {.name = "CB_ReadIMU", .stack_size = 8192, .priority = osPriorityHigh});
   hal::rtos::scheduler.create(CB_ReadAltimeter, {.name = "CB_ReadAltimeter", .stack_size = 8192, .priority = osPriorityHigh});
-  hal::rtos::scheduler.create(CB_RetainDeployment, {.name = "CB_RetainDeployment", .stack_size = 4096, .priority = osPriorityHigh});
-  hal::rtos::scheduler.create(CB_AutoZeroAlt, {.name = "CB_AutoZeroAlt", .stack_size = 4096, .priority = osPriorityHigh});
+
+  if constexpr (RA_RETAIN_DEPLOYMENT_ENABLED)
+    hal::rtos::scheduler.create(CB_RetainDeployment, {.name = "CB_RetainDeployment", .stack_size = 4096, .priority = osPriorityHigh});
+
+  if constexpr (RA_AUTO_ZERO_ALT_ENABLED)
+    hal::rtos::scheduler.create(CB_AutoZeroAlt, {.name = "CB_AutoZeroAlt", .stack_size = 4096, .priority = osPriorityHigh});
 
   hal::rtos::scheduler.create(CB_ConstructData, {.name = "CB_ConstructData", .stack_size = 8192, .priority = osPriorityNormal});
   hal::rtos::scheduler.create(CB_SDLogger, {.name = "CB_SDLogger", .stack_size = 8192, .priority = osPriorityNormal});
 
-  hal::rtos::scheduler.create(CB_DebugLogger, {.name = "CB_DebugLogger", .stack_size = 8192, .priority = osPriorityBelowNormal});
+  if constexpr (RA_USB_DEBUG_ENABLED)
+    hal::rtos::scheduler.create(CB_DebugLogger, {.name = "CB_DebugLogger", .stack_size = 8192, .priority = osPriorityBelowNormal});
 
   hal::rtos::scheduler.create(CB_SDSave, {.name = "CB_SDSave", .stack_size = 8192, .priority = osPriorityLow});
 }
@@ -364,7 +367,9 @@ void EvalFSM() {
   switch (fsm.state()) {
     case UserState::STARTUP: {
       // <--- Next: always transfer --->
-      digitalWrite(USER_GPIO_LED, 0);
+      if constexpr (RA_LED_ENABLED) {
+        digitalWrite(USER_GPIO_LED, 0);
+      }
       fsm.transfer(UserState::IDLE_SAFE);
       break;
     }
@@ -378,15 +383,18 @@ void EvalFSM() {
 
       state_millis_elapsed = millis() - state_millis_start;
 
-      if (!RA_STARTUP_COUNTDOWN_ENABLED ||
-          state_millis_elapsed >= RA_STARTUP_COUNTDOWN)
-        fsm.transfer(UserState::ARMED);
+      if constexpr (RA_STARTUP_COUNTDOWN_ENABLED) {
+        if (state_millis_elapsed >= RA_STARTUP_COUNTDOWN)
+          fsm.transfer(UserState::ARMED);
+      }
       break;
     }
 
     case UserState::ARMED: {
       // <--- Next: always transfer (should wait for uplink) --->
-      digitalWrite(USER_GPIO_LED, 1);
+      if constexpr (RA_LED_ENABLED) {
+        digitalWrite(USER_GPIO_LED, 1);
+      }
       fsm.transfer(UserState::PAD_PREOP);
       break;
     }
@@ -404,7 +412,9 @@ void EvalFSM() {
 
       if (sampler.is_sampled() &&
           sampler.over_by_under<double>() > RA_TRUE_TO_FALSE_RATIO) {
-        digitalWrite(USER_GPIO_LED, 0);
+        if constexpr (RA_LED_ENABLED) {
+          digitalWrite(USER_GPIO_LED, 0);
+        }
         fsm.transfer(UserState::POWERED);
       }
       break;
@@ -466,7 +476,7 @@ void EvalFSM() {
         sampler.set_capacity(RA_MAIN_SAMPLES, /*recount*/ false);
         sampler.set_threshold(RA_MAIN_ALT_COMPENSATED, /*recount*/ false);
         sampler_overspeed.reset();
-        sampler_overspeed.set_threshold(RA_MAIN_OVERSPEED_VEL);
+        sampler_overspeed.set_threshold(RA_MAIN_OVERSPEED_VEL, /*recount*/ false);
         state_millis_start = millis();
       }
 
@@ -515,7 +525,9 @@ void EvalFSM() {
     }
 
     case UserState::LANDED: {
-      digitalWrite(USER_GPIO_LED, 1);
+      if constexpr (RA_LED_ENABLED) {
+        digitalWrite(USER_GPIO_LED, 1);
+      }
       break;
     }
 

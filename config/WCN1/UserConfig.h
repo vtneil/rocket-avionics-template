@@ -19,6 +19,18 @@ constexpr size_t RA_NUM_ALTIMETER = 1;
 // Number of GNSS sensors
 constexpr size_t RA_NUM_GNSS = 1;
 
+// LEDs
+constexpr bool RA_LED_ENABLED = true;
+
+// USB Debug
+constexpr bool RA_USB_DEBUG_ENABLED = true;
+
+// Retain Deployment
+constexpr bool RA_RETAIN_DEPLOYMENT_ENABLED = false;
+
+// Auto-Zero Altitude
+constexpr bool RA_AUTO_ZERO_ALT_ENABLED = true;
+
 /* THREAD LOOP INTERVALS */
 
 // IMU Reading
